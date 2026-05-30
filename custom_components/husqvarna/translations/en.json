@@ -1,0 +1,66 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Add a Husqvarna account",
+        "description": "Paste the Application Key and Application Secret from your application at developer.husqvarnagroup.cloud. The application needs the Authentication, Automower Connect and Connectivity APIs connected.",
+        "data": {
+          "api_key": "Application Key",
+          "api_secret": "Application Secret"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot reach the Husqvarna cloud.",
+      "invalid_auth": "Application Key / Secret was rejected.",
+      "simultaneous_logins": "The cloud locked this application for simultaneous logins. Stop any other client using the same key (e.g. ioBroker) for a few minutes and retry.",
+      "unknown": "Unexpected error."
+    },
+    "abort": {
+      "already_configured": "This Husqvarna account is already configured."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "connected": {"name": "Connected"},
+      "charging": {"name": "Charging"},
+      "problem": {"name": "Problem"}
+    },
+    "button": {
+      "park_until_next_schedule": {"name": "Park until next schedule"},
+      "park_until_further_notice": {"name": "Park until further notice"},
+      "pause": {"name": "Pause"},
+      "resume_schedule": {"name": "Resume schedule"},
+      "confirm_error": {"name": "Confirm error"},
+      "refresh_messages": {"name": "Refresh messages"}
+    },
+    "device_tracker": {
+      "position": {"name": "Position"}
+    },
+    "number": {
+      "cutting_height": {"name": "Cutting height"}
+    },
+    "sensor": {
+      "battery": {"name": "Battery"},
+      "activity": {"name": "Activity"},
+      "mode": {"name": "Mode"},
+      "state": {"name": "State"},
+      "restricted_reason": {"name": "Restricted reason"},
+      "error_code": {"name": "Error code"},
+      "next_start": {"name": "Next start"},
+      "cutting_time": {"name": "Total cutting time"},
+      "distance": {"name": "Total drive distance"},
+      "charging_cycles": {"name": "Charging cycles"},
+      "collisions": {"name": "Collisions"},
+      "messages": {"name": "Messages"}
+    }
+  },
+  "services": {
+    "park_for": {"name": "Park for duration", "description": "Park for X minutes."},
+    "start_for": {"name": "Start for duration", "description": "Start for X minutes."},
+    "start_in_work_area": {"name": "Start in work area", "description": "Start in a specific work area for X minutes."},
+    "confirm_error": {"name": "Confirm error", "description": "Clear a confirmable error."},
+    "reset_cutting_blade_usage_time": {"name": "Reset blade usage time", "description": "Zero the blade-usage counter."},
+    "refresh_messages": {"name": "Refresh messages", "description": "Pull the alarm history."}
+  }
+}

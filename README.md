@@ -40,11 +40,35 @@ cloud's `simultaneous.logins` lock never fires.
 - **Strict typing** - passes `mypy --strict`. PEP 561 `py.typed`
   marker so downstream consumers get full type inference.
 
-Coming next:
+## Features (Home Assistant integration, v0.1)
 
-- HA `custom_components/husqvarna/` integration with the
-  `lawn_mower` platform, alarm sensors, error-confirm button, and a
-  position device-tracker. Multi-Brain / multi-Mower aware.
+Drop `custom_components/husqvarna/` into your HA config directory (or
+install via HACS once published), then add the integration from
+*Settings -> Integrations* and paste the Application Key + Application
+Secret from your Husqvarna Developer-Portal app. Per mower you get:
+
+- **`lawn_mower`** entity - HA's built-in mower platform with
+  DOCK / PAUSE / START_MOWING mapped onto park-until-next-schedule /
+  pause / resume-schedule.
+- **Sensors** for battery, activity, mode, state, restricted-reason,
+  error code, next start (as a timestamp), and lifetime statistics
+  (cutting time, distance, charging cycles, collisions).
+- **Alarm history sensor** showing the count of cached mower
+  messages plus the 10 most recent as an attribute - each with
+  severity, fault code, timestamp and GPS position of the fault.
+- **Binary sensors** for cloud-connected, charging and problem state.
+- **Device tracker** with the latest GPS point (pushed live via
+  WebSocket).
+- **Buttons** for park / pause / resume, confirm-error (only when an
+  error is currently confirmable), and refresh-messages.
+- **Number** for the global cutting height (1-9).
+- **Services** for park-for-duration, start-for-duration,
+  start-in-work-area, reset-blade-usage-time and refresh-messages.
+
+Coexists with the official HA-Core `husqvarna_automower` integration
+- this one uses the *client-credentials* OAuth flow (App Key + Secret),
+the Core one uses the *authorization-code* flow. Pick whichever
+matches how you registered your developer-portal application.
 
 ## Extensibility
 

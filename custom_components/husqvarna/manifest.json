@@ -1,0 +1,13 @@
+{
+  "domain": "husqvarna",
+  "name": "Husqvarna",
+  "version": "0.1.0",
+  "documentation": "https://github.com/magictom74/homeassistant-husqvarna",
+  "issue_tracker": "https://github.com/magictom74/homeassistant-husqvarna/issues",
+  "codeowners": ["@magictom74"],
+  "config_flow": true,
+  "iot_class": "cloud_push",
+  "integration_type": "hub",
+  "requirements": ["pyhusqvarna==0.1.0"],
+  "dependencies": []
+}

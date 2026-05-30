@@ -1,0 +1,97 @@
+park_for:
+  name: Park for duration
+  description: Park the mower for a specified number of minutes, then resume the schedule.
+  fields:
+    mower_id:
+      name: Mower id
+      description: The mower's Husqvarna ID (UUID).
+      required: true
+      example: "a9693dac-7938-4162-bd38-ca80bf276608"
+      selector:
+        text:
+    duration_minutes:
+      name: Duration (minutes)
+      required: true
+      example: 60
+      selector:
+        number:
+          min: 1
+          max: 65000
+          unit_of_measurement: min
+
+start_for:
+  name: Start for duration
+  description: Start mowing now for a specified number of minutes, overriding the schedule.
+  fields:
+    mower_id:
+      name: Mower id
+      required: true
+      selector:
+        text:
+    duration_minutes:
+      name: Duration (minutes)
+      required: true
+      example: 30
+      selector:
+        number:
+          min: 1
+          max: 65000
+          unit_of_measurement: min
+
+start_in_work_area:
+  name: Start in work area
+  description: Start mowing in a specific work area for a number of minutes.
+  fields:
+    mower_id:
+      name: Mower id
+      required: true
+      selector:
+        text:
+    work_area_id:
+      name: Work area id
+      required: true
+      example: 0
+      selector:
+        number:
+          min: 0
+    duration_minutes:
+      name: Duration (minutes)
+      required: true
+      example: 30
+      selector:
+        number:
+          min: 1
+          max: 65000
+          unit_of_measurement: min
+
+confirm_error:
+  name: Confirm error
+  description: >-
+    Clear the current confirmable error on the mower. Only valid when
+    the mower's last reported state had isErrorConfirmable=true.
+  fields:
+    mower_id:
+      name: Mower id
+      required: true
+      selector:
+        text:
+
+reset_cutting_blade_usage_time:
+  name: Reset cutting-blade usage time
+  description: Reset the cutting-blade-usage counter (after a blade change).
+  fields:
+    mower_id:
+      name: Mower id
+      required: true
+      selector:
+        text:
+
+refresh_messages:
+  name: Refresh messages
+  description: Pull the alarm/message history from the cloud into the messages sensor.
+  fields:
+    mower_id:
+      name: Mower id
+      required: true
+      selector:
+        text:

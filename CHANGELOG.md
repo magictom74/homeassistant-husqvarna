@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Home Assistant custom integration** under
+  `custom_components/husqvarna/`. One config entry per Husqvarna
+  account; multi-mower aware. Push-driven via WebSocket - no
+  polling loop.
+  - **`lawn_mower`** entity per mower with DOCK / PAUSE /
+    START_MOWING mapped to park-until-next-schedule / pause /
+    resume-schedule. Activity reflects MOWING / RETURNING / DOCKED /
+    PAUSED / ERROR derived from the Husqvarna activity+state combo.
+  - **Sensors** per mower: battery (%), activity, mode, state,
+    restricted-reason, error-code, next scheduled start
+    (timestamp), total cutting time, total drive distance,
+    charging cycles, collisions, messages (count + the 10 most
+    recent as an attribute, including severity / code / GPS).
+  - **Binary sensors** per mower: connected, charging, problem.
+  - **Device tracker** per mower (only when capability.position) -
+    tracks the latest GPS point pushed via WebSocket.
+  - **Buttons** per mower: park until next schedule, park until
+    further notice, pause, resume schedule, refresh messages, and
+    confirm-error (only for capable mowers, and only available
+    when an error is actively confirmable).
+  - **Number** per mower: cutting height (1-9).
+  - **Services**: `husqvarna.park_for`, `husqvarna.start_for`,
+    `husqvarna.start_in_work_area`, `husqvarna.confirm_error`,
+    `husqvarna.reset_cutting_blade_usage_time`,
+    `husqvarna.refresh_messages`.
+  - `hacs.json` so the integration is installable via HACS.
+
+### Added
+
 - **Alarm history** via `AutomowerClient.get_messages()` -
   returns up to 50 `MowerMessage` entries with severity
   (`FATAL` / `ERROR` / `WARNING` / `INFO` / `DEBUG` / `SW` /
