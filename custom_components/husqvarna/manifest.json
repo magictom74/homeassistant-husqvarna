@@ -1,13 +1,13 @@
 {
   "domain": "husqvarna",
   "name": "Husqvarna",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "documentation": "https://github.com/magictom74/homeassistant-husqvarna",
   "issue_tracker": "https://github.com/magictom74/homeassistant-husqvarna/issues",
   "codeowners": ["@magictom74"],
   "config_flow": true,
   "iot_class": "cloud_push",
   "integration_type": "hub",
-  "requirements": ["pyhusqvarna @ git+https://github.com/magictom74/homeassistant-husqvarna.git@v0.1.1"],
+  "requirements": ["pyhusqvarna @ git+https://github.com/magictom74/homeassistant-husqvarna.git@v0.1.2"],
   "dependencies": []
 }

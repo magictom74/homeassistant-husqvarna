@@ -8,6 +8,7 @@ from typing import Any
 import voluptuous as vol
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.httpx_client import get_async_client
 
 from pyhusqvarna import (
     AuthError,
@@ -80,7 +81,11 @@ class HusqvarnaConfigFlow(ConfigFlow, domain=DOMAIN):
         self, api_key: str, api_secret: str, errors: dict[str, str]
     ) -> tuple[str | None, str]:
         """Validate credentials and return (unique_id, friendly_label)."""
-        auth = HusqvarnaAuth(api_key=api_key, api_secret=api_secret)
+        # Share HA's pre-built httpx client so we don't load CA certs in the event loop.
+        http_client = get_async_client(self.hass)
+        auth = HusqvarnaAuth(
+            api_key=api_key, api_secret=api_secret, http_client=http_client
+        )
         try:
             token = await auth.get_token()
         except SimultaneousLoginsError:
@@ -106,7 +111,7 @@ class HusqvarnaConfigFlow(ConfigFlow, domain=DOMAIN):
         # account has none paired. We tolerate failure here - REST might
         # be down even if auth worked.
         try:
-            async with AutomowerClient(auth) as client:
+            async with AutomowerClient(auth, http_client=http_client) as client:
                 mowers = await client.list_mowers()
             label = (
                 f"Husqvarna ({len(mowers)} mower"

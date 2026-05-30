@@ -10,6 +10,7 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.httpx_client import get_async_client
 
 from pyhusqvarna import (
     AuthError,
@@ -78,7 +79,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     api_key: str = entry.data[CONF_API_KEY]
     api_secret: str = entry.data[CONF_API_SECRET]
 
-    auth = HusqvarnaAuth(api_key=api_key, api_secret=api_secret)
+    # Share HA's pre-built httpx client so we don't load CA certs in the event loop.
+    http_client = get_async_client(hass)
+    auth = HusqvarnaAuth(
+        api_key=api_key, api_secret=api_secret, http_client=http_client
+    )
     try:
         await auth.get_token()
     except SimultaneousLoginsError as exc:
@@ -97,7 +102,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             f"Cannot reach Husqvarna cloud: {exc}"
         ) from exc
 
-    client = AutomowerClient(auth)
+    client = AutomowerClient(auth, http_client=http_client)
     coordinator = HusqvarnaCoordinator(hass, entry=entry, auth=auth, client=client)
     try:
         await coordinator.async_config_entry_first_refresh()
