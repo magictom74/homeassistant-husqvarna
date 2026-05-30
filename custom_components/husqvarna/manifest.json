@@ -8,6 +8,6 @@
   "config_flow": true,
   "iot_class": "cloud_push",
   "integration_type": "hub",
-  "requirements": ["pyhusqvarna==0.1.0"],
+  "requirements": ["pyhusqvarna @ git+https://github.com/magictom74/homeassistant-husqvarna.git@v0.1.0"],
   "dependencies": []
 }
