@@ -1,0 +1,55 @@
+name: Bug report
+description: Something works differently than expected against the Husqvarna cloud
+labels: ["bug"]
+body:
+  - type: input
+    id: pyhusqvarna-version
+    attributes:
+      label: pyhusqvarna version
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version
+      placeholder: "3.12.1"
+    validations:
+      required: true
+  - type: input
+    id: mower-model
+    attributes:
+      label: Mower model (if relevant)
+      placeholder: "Automower 305E NERA"
+  - type: textarea
+    id: reproducer
+    attributes:
+      label: Reproducer
+      description: |
+        Minimal code or commands that show the issue. Ideally the
+        smallest snippet that fails. **Do not paste your App Key
+        or App Secret** - use placeholders.
+      render: python
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      description: Include the raw cloud response or WebSocket frame if relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        Output with `logging.basicConfig(level=logging.DEBUG)` set on
+        the `pyhusqvarna` logger. Remove anything sensitive.
+      render: shell
