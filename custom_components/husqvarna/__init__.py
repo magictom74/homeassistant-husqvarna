@@ -32,6 +32,7 @@ from .const import (
     SERVICE_START_FOR,
     SERVICE_START_IN_WORK_AREA,
 )
+from . import config_flow  # noqa: F401 - pre-import to avoid sync import_module in event loop
 from .coordinator import HusqvarnaCoordinator
 
 _LOGGER = logging.getLogger(__name__)
