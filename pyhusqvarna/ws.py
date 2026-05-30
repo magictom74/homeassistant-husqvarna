@@ -229,6 +229,16 @@ class HusqvarnaWebSocketClient:
         if not isinstance(frame, dict):
             _LOGGER.warning("[husqvarna.ws] non-object frame: %r", frame)
             return
+        # The server hello (sent right after a successful handshake) has
+        # the shape {"ready": true, "connectionId": "..."} - no type, no
+        # id. Log it for diagnostics but don't pass it through to event
+        # handlers; they only care about typed mower events.
+        if "ready" in frame and "type" not in frame:
+            _LOGGER.debug(
+                "[husqvarna.ws] server ready, connectionId=%s",
+                frame.get("connectionId", "?"),
+            )
+            return
         try:
             await self._on_frame(frame)
         except Exception:

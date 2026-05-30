@@ -7,12 +7,15 @@ import pytest
 from pyhusqvarna import (
     HeadlightMode,
     InactiveReason,
+    MessageSeverity,
     Mower,
     MowerActivity,
     MowerError,
+    MowerMessage,
     MowerMode,
     MowerState,
     OverrideAction,
+    Planner,
     RestrictedReason,
 )
 
@@ -255,3 +258,88 @@ class TestMowerWithDelta:
         })
         assert len(updated.positions) == 1
         assert updated.positions[0].latitude == 47.99
+
+    def test_position_event_v2_singular_is_prepended(self) -> None:
+        # Real shape captured 2026-05-30 from the live WS: a single point
+        # under "position" (singular), not the "positions" array shape.
+        m = Mower.from_raw(make_full_raw())
+        initial_count = len(m.positions)
+        first_point = m.positions[0]
+        updated = m.with_delta({
+            "id": m.id, "type": "position-event-v2",
+            "attributes": {"position": {"latitude": 47.5, "longitude": 8.5}},
+        })
+        # New point is at the front, history is preserved
+        assert len(updated.positions) == initial_count + 1
+        assert updated.positions[0].latitude == 47.5
+        assert updated.positions[0].longitude == 8.5
+        assert updated.positions[1] == first_point
+
+    def test_position_event_v2_caps_at_50(self) -> None:
+        # Build a Mower with 50 already-known positions; the new point
+        # must push one off the end.
+        raw = make_full_raw()
+        raw["attributes"]["positions"] = [  # type: ignore[index]
+            {"latitude": float(i), "longitude": float(i)} for i in range(50)
+        ]
+        m = Mower.from_raw(raw)
+        assert len(m.positions) == 50
+        updated = m.with_delta({
+            "id": m.id, "type": "position-event-v2",
+            "attributes": {"position": {"latitude": 99.0, "longitude": 99.0}},
+        })
+        assert len(updated.positions) == 50
+        assert updated.positions[0].latitude == 99.0
+
+
+class TestPlanner:
+    def test_external_reason_parsed(self) -> None:
+        p = Planner.from_raw({
+            "nextStartTimestamp": 0,
+            "override": {"action": "FORCE_PARK"},
+            "restrictedReason": "EXTERNAL",
+            "externalReason": 200042,
+        })
+        assert p.restricted_reason is RestrictedReason.EXTERNAL
+        assert p.external_reason == 200042
+
+    def test_external_reason_defaults_to_zero(self) -> None:
+        p = Planner.from_raw({
+            "nextStartTimestamp": 0,
+            "override": {"action": "NOT_ACTIVE"},
+            "restrictedReason": "NONE",
+        })
+        assert p.external_reason == 0
+
+    def test_new_restricted_reasons(self) -> None:
+        for raw, expected in [
+            ("ALL_WORK_AREAS_COMPLETED", RestrictedReason.ALL_WORK_AREAS_COMPLETED),
+            ("EXTERNAL", RestrictedReason.EXTERNAL),
+            ("WORK_AREA_ABANDONED", RestrictedReason.WORK_AREA_ABANDONED),
+        ]:
+            assert RestrictedReason.from_raw(raw) is expected
+
+
+class TestMowerMessage:
+    def test_full_message(self) -> None:
+        msg = MowerMessage.from_raw({
+            "time": 1724158848,
+            "code": 49,
+            "severity": "WARNING",
+            "latitude": 58.3855176,
+            "longitude": 15.4201136,
+        })
+        assert msg.timestamp_ms == 1724158848
+        assert msg.code == 49
+        assert msg.severity is MessageSeverity.WARNING
+        assert msg.latitude == 58.3855176
+        assert msg.longitude == 15.4201136
+
+    def test_message_without_position(self) -> None:
+        msg = MowerMessage.from_raw({"time": 0, "code": 15, "severity": "ERROR"})
+        assert msg.latitude is None
+        assert msg.longitude is None
+
+    def test_severity_unknown_falls_back(self) -> None:
+        msg = MowerMessage.from_raw({"time": 0, "code": 0, "severity": "FUTURE"})
+        assert msg.severity is MessageSeverity.UNKNOWN

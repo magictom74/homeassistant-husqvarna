@@ -1,10 +1,32 @@
 # Husqvarna Connect API Notes
 
 Sammlung der relevanten Endpoints + Eigenheiten. Basiert auf:
-- Live-Diagnose `iobroker.husqvarna-automower` v0.5.0 auf dolphin (2026-05-26)
+- **Offizielle OpenAPI-Spec v1.0.0** (`docs/openapi-automower-connect-v1.0.yaml`,
+  bezogen aus dem Husqvarna Developer Portal am 2026-05-30)
+- Eigene Live-Validierung pyhusqvarna v0.1 gegen einen 305E NERA (2026-05-30)
 - Husqvarna Developer Portal Docs (https://developer.husqvarnagroup.cloud/)
-- Code-Analyse `aioautomower` (HA-Core-Library)
-- Code-Analyse `iobroker.husqvarna-automower`
+- Code-Analyse `aioautomower` (HA-Core-Library) als Cross-Reference
+
+## Pflicht-Subscriptions im Husqvarna Developer Portal
+
+Die Application im Portal braucht **alle drei** der folgenden Connected APIs.
+Fehlt eine, schlagen Teile fehl - ohne dass der Fehler im Application-Log
+des Adapters offensichtlich wird:
+
+| Subscription | Was es ermoeglicht |
+|---|---|
+| **Authentication API** | OAuth2-Token holen (`/oauth2/token`) |
+| **Automower Connect API** | REST gegen `api.amc.husqvarna.dev/v1/...` |
+| **Connectivity API** | WebSocket gegen `wss://ws.openapi.husqvarna.dev/v1` |
+
+Symptome bei fehlender Subscription:
+- Fehlt **Connectivity API** -> WS-Handshake liefert
+  `403 {"message":"User is not authorized to access this resource with an explicit deny in an identity-based policy"}`.
+  REST funktioniert in dem Zustand weiterhin.
+- Token-Response hat `scope: "iam:read"` (zeigt nur die Authentication-API
+  Subscription) **auch wenn** die anderen Subscriptions tatsaechlich aktiv
+  sind - das `scope`-Feld ist also kein verlaesslicher Indikator. Nur der
+  HTTP-Status auf konkreten Endpoints zeigt den wahren Stand.
 
 ## Connection-Basics
 
@@ -154,7 +176,7 @@ Headers: Authorization, X-Api-Key, Authorization-Provider
 }
 ```
 
-### Aktion senden
+### Aktion senden (POST /actions)
 
 ```
 POST https://api.amc.husqvarna.dev/v1/mowers/<MOWER_ID>/actions
@@ -163,7 +185,7 @@ Content-Type: application/vnd.api+json
 {"data": {"type": "<ACTION>", "attributes": {<OPTIONAL>}}}
 ```
 
-**Action-Typen:**
+**Action-Typen (laut OpenAPI-Spec):**
 
 | Action | Body | Wirkung |
 |--------|------|---------|
@@ -171,45 +193,143 @@ Content-Type: application/vnd.api+json
 | `Pause` | `{}` | Sofort pausieren |
 | `ParkUntilNextSchedule` | `{}` | Bis zur naechsten Schedule parken |
 | `ParkUntilFurtherNotice` | `{}` | Dauerhaft parken bis explizit resumed |
-| `Park` | `{"attributes": {"duration": <minutes>}}` | Fuer X Minuten parken |
+| `Park` | `{"attributes": {"duration": <minutes>}}` ODER `{"attributes": {"externalReason": <200000-299999>}}` | Fuer X Minuten parken / mit External-Reason |
 | `Start` | `{"attributes": {"duration": <minutes>}}` | Sofort X Minuten ausserhalb Schedule starten |
-| `ConfirmError` | `{}` | Fehler bestaetigen (nur wenn `isErrorConfirmable: true`) |
+| `StartInWorkArea` | `{"attributes": {"duration": <minutes>, "workAreaId": <int>}}` | Start in einem bestimmten Work-Area |
 
-**Response 202 Accepted** - asynchrone Ausfuehrung, State-Aenderung via WebSocket abwarten.
-
-### Settings aendern
+**ACHTUNG - ConfirmError ist KEIN `/actions`-Typ.** Eigener Endpoint:
 
 ```
-PATCH https://api.amc.husqvarna.dev/v1/mowers/<MOWER_ID>/settings
+POST https://api.amc.husqvarna.dev/v1/mowers/<MOWER_ID>/errors/confirm
+```
+
+Kein Request-Body. Nur erfolgreich wenn `isErrorConfirmable: true` aktuell
+auf dem Mower steht. Verfuegbar bei 405X, 415X, 435X AWD, 535 AWD, sowie
+**allen Ceora, EPOS und NERA Modellen** (also auch unser 305E NERA).
+
+**Response 202 Accepted** auf allen Action- und ConfirmError-Aufrufen.
+State-Aenderung kommt asynchron via WebSocket.
+
+### Settings aendern (POST, nicht PATCH)
+
+```
+POST https://api.amc.husqvarna.dev/v1/mowers/<MOWER_ID>/settings
 Content-Type: application/vnd.api+json
 
 {"data": {"type": "settings", "attributes": {"cuttingHeight": 5}}}
 ```
 
-Felder: `cuttingHeight` (1-9), `headlight.mode` (`ALWAYS_ON`, `ALWAYS_OFF`, `EVENING_ONLY`, `EVENING_AND_NIGHT`).
+**Spec-Korrektur:** Settings nutzt **POST**, nicht PATCH wie urspruenglich
+angenommen. Felder:
 
-### Schedule (Calendar) aendern
+- `cuttingHeight` (1-9)
+- `headlight.mode` (`ALWAYS_ON`, `ALWAYS_OFF`, `EVENING_ONLY`, `EVENING_AND_NIGHT`)
+- `timer: { dateTime, timeZone }` - fuer Mower ohne Work-Areas, um die
+  Mower-interne Uhrzeit zu setzen; Mower mit Work-Areas ignorieren das.
+
+Response ist `JsonApiDataDocumentListCommandResult` (Liste von command-ids,
+weil mehrere Settings in einem Request kombiniert werden koennen).
+
+### Calendar aendern
 
 ```
-POST https://api.amc.husqvarna.dev/v1/mowers/<MOWER_ID>/calendar/tasks
+POST https://api.amc.husqvarna.dev/v1/mowers/<MOWER_ID>/calendar
 {"data": {"type": "calendar", "attributes": {"tasks": [...]}}}
 ```
 
-Schreibt komplette Task-Liste neu (kein partielles Update).
+Achtung: Spec-Korrektur, der Endpoint ist `/calendar` (nicht
+`/calendar/tasks`). Schreibt komplette Task-Liste neu (kein partielles
+Update). Fuer Mower mit Work-Areas: pro Work-Area gibt es einen eigenen
+Calendar-Endpoint `/v1/mowers/<id>/workAreas/<workAreaId>/calendar`.
+
+### Alarm-/Fehler-History (Messages)
+
+```
+GET https://api.amc.husqvarna.dev/v1/mowers/<MOWER_ID>/messages
+```
+
+Liefert die letzten bis zu 50 Messages des Mowers - mit Code, Severity
+und (falls verfuegbar) GPS-Position der Fehlerstelle. Wird **nicht** ueber
+WebSocket gepusht; nur per Pull abrufbar.
+
+Schema:
+
+```json
+{
+  "data": {
+    "type": "messages",
+    "id": "messages",
+    "attributes": {
+      "messages": [
+        {
+          "time": 1724158848,         // ms since epoch, mower-local
+          "code": 49,                  // siehe Husqvarna error-code catalog
+          "severity": "WARNING",       // FATAL|ERROR|WARNING|INFO|DEBUG|SW|UNKNOWN
+          "latitude": 58.3855176,
+          "longitude": 15.4201136
+        }
+      ]
+    }
+  }
+}
+```
+
+Error-Code-Katalog:
+https://developer.husqvarnagroup.cloud/apis/automower-connect-api?tab=status%20description%20and%20error%20codes
 
 ### Stay-Out-Zones
 
 ```
-GET /v1/mowers/<id>/stayOutZones
-PATCH /v1/mowers/<id>/stayOutZones/<zoneId>  (enable/disable)
+GET   /v1/mowers/<id>/stayOutZones
+PATCH /v1/mowers/<id>/stayOutZones/<zoneId>    -> enable/disable
 ```
+
+PATCH-Body: `{"data": {"type": "stayOutZone", "id": "<zoneId>", "attributes": {"enable": true|false}}}`.
+
+Stay-Out-Zones sind auf EPOS-Mowern **nicht** verfuegbar.
 
 ### Work-Areas
 
 ```
-GET /v1/mowers/<id>/workAreas
-PATCH /v1/mowers/<id>/workAreas/<workAreaId>  (cuttingHeight, enabled)
+GET   /v1/mowers/<id>/workAreas              -> alle Work-Areas mit Detail
+GET   /v1/mowers/<id>/workAreas/<id>         -> ein Work-Area
+PATCH /v1/mowers/<id>/workAreas/<id>         -> cuttingHeight / enabled / name / orientation
+POST  /v1/mowers/<id>/workAreas/<id>/calendar -> Task-Liste pro Work-Area
 ```
+
+WorkArea-Felder (vollstaendig):
+
+- `workAreaId` (int64), `name`, `type` (`RANDOM` | `SYSTEMATIC`)
+- `cuttingHeight` **0-100 (Prozent)** - NICHT 1-9 wie das globale Setting!
+- `enabled` (bool), `useGlobalCuttingHeight` (bool)
+- `orientation` / `orientationShift` / `currentOrientation` (nur EPOS,
+  fuer SYSTEMATIC-Mowing-Pattern)
+- `progress` (0-100, nur EPOS), `lastTimeCompleted`, `lastTimeAbandoned`
+  (Unix-Sekunden, mower-local)
+
+### Profile
+
+```
+GET    /v1/mowers/<id>/profiles
+POST   /v1/mowers/<id>/profiles                -> neues Profil anlegen
+GET    /v1/mowers/<id>/profiles/current
+PATCH  /v1/mowers/<id>/profiles/current        -> aktuelles Profil umbenennen
+POST   /v1/mowers/<id>/profiles/<profileId>    -> dieses Profil als current setzen
+DELETE /v1/mowers/<id>/profiles/<profileId>
+```
+
+Profile sind verschiedene Sets an Work-Areas. Nur eines kann gleichzeitig
+aktiv sein. Profile-Wechsel laed neue Map-Daten - kann mehrere Sekunden
+dauern, kein Push wenn fertig.
+
+### Statistics-Reset
+
+```
+POST /v1/mowers/<id>/statistics/resetCuttingBladeUsageTime
+```
+
+Setzt nur den `cuttingBladeUsageTime`-Counter zurueck - z.B. nach
+Klingenwechsel.
 
 ## WebSocket
 
@@ -223,31 +343,57 @@ Headers (im Handshake):
   Authorization-Provider: husqvarna
 ```
 
-### Event-Frames
+### Event-Frames (live verifiziert 2026-05-30)
 
-Server sendet JSON-Frames vom Format:
+**Initial-Frame (Server-Hello)** - direkt nach erfolgreichem Handshake:
+
+```json
+{"ready": true, "connectionId": "<aws-apigw-id>"}
+```
+
+Kein `type`, kein `id`. Library sollte den ignorieren (nur loggen) und auf
+typed Frames warten.
+
+**Typed Event-Frames** vom Format:
 
 ```json
 {
   "id": "<MOWER_ID>",
   "type": "<EVENT_TYPE>",
+  "attributes": { ... }
+}
+```
+
+**WICHTIG - Position kommt als Singular:**
+
+```json
+{
+  "id": "a9693dac-...",
+  "type": "position-event-v2",
   "attributes": {
-    "<changed_field>": <new_value>
+    "position": { "latitude": 47.30, "longitude": 8.45 }
   }
 }
 ```
 
-Beispiel-Event-Felder die im ioBroker-Code referenziert sind (zu verifizieren in Discovery):
-- `battery` → `batteryPercent`, `remainingChargingTime`
-- `mower` → `mode`, `activity`, `state`, `errorCode`, `errorCodeTimestamp`, `isErrorConfirmable`
-- `cuttingHeight`
-- `headlight` → `mode`
-- `calendar` → `tasks[]`
-- `positions[]` → `latitude`, `longitude`
-- `planner` → `nextStartTimestamp`, `override`, `restrictedReason`
-- `metadata` → `connected`, `statusTimestamp`
+Die REST-Response (`/mowers`) hat `positions: [...]` als Array (bis 50
+Punkte History). Der WebSocket pusht aber **ein einzelnes Position-Update**
+unter `position` (Singular). Library muss beim Delta-Merge das neue
+Position-Objekt vor die History-Liste prependen (max 50 behalten).
 
-WebSocket sendet i.d.R. **Delta** (nur geaenderte Felder), nicht das komplette Mower-Objekt.
+Andere im ioBroker-Code referenzierte (und teils in Discovery zu
+verifizierende) WS-Event-Typen:
+
+- `status-event-v2` (Annahme) → `attributes.mower`, `attributes.battery`,
+  `attributes.planner`, `attributes.metadata`
+- `settings-event-v2` (Annahme) → `attributes.settings`
+- `calendar-event-v2` (Annahme) → `attributes.calendar`
+
+Konkrete Event-Type-Namen im neuen `-v2`-Schema werden im naechsten
+Live-Run mit aktivem Mower bestaetigt.
+
+WebSocket sendet **immer Delta** (nur geaenderte Sub-Trees), nicht das
+komplette Mower-Objekt.
 
 ### Close-Codes (aus iobroker-Adapter-Code dokumentiert)
 
@@ -321,66 +467,88 @@ Wenn ioBroker-Adapter und HA-Custom-Integration parallel laufen wuerden, blockie
 4. **Vor Discovery:** ioBroker-Adapter stoppen (sonst gegenseitige Sperre)
 5. **Optional:** neue App "HomeAssistant" im Developer Portal anlegen → parallele Tests moeglich
 
-## Mower-Datentypen / Enumerationen (zu verifizieren in Discovery)
+## Mower-Datentypen / Enumerationen (laut OpenAPI v1.0.0)
 
 ### `mower.mode`
-- `MAIN_AREA`
-- `SECONDARY_AREA`
-- `HOME`
-- `DEMO`
-- `POI`
+- `MAIN_AREA` - Mowt bis Akku leer, geht heim, laedt, geht wieder raus
+- `SECONDARY_AREA` - Mowt bis Akku leer oder Zeit-Limit, stoppt dann im Garten
+- `HOME` - Geht heim und parkt dauerhaft
+- `DEMO` - Wie MAIN_AREA aber kuerzere Zyklen, **Klingen aus**
+- `POI` - Point of Interest
 - `UNKNOWN`
 
 ### `mower.activity`
-- `UNKNOWN`
-- `NOT_APPLICABLE`
+- `UNKNOWN`, `NOT_APPLICABLE`
 - `MOWING`
-- `GOING_HOME`
-- `CHARGING`
-- `LEAVING`
-- `PARKED_IN_CS`
-- `STOPPED_IN_GARDEN`
+- `GOING_HOME` - Auf dem Weg zur Charging-Station
+- `CHARGING` - Laedt, **weil er selbst entschieden hat heimzugehen**
+  (laed er wegen Restriction, ist activity `PARKED_IN_CS`!)
+- `LEAVING` - Verlaesst Station, Richtung Startpunkt
+- `PARKED_IN_CS` - Parkt in der Station
+- `STOPPED_IN_GARDEN` - Im Garten gestoppt (z.B. nach manuellem Task)
 
 ### `mower.state`
-- `UNKNOWN`
-- `NOT_APPLICABLE`
-- `PAUSED`
-- `IN_OPERATION`
-- `WAIT_UPDATING`
-- `WAIT_POWER_UP`
-- `RESTRICTED`
-- `OFF`
-- `STOPPED`
-- `ERROR`
-- `FATAL_ERROR`
+- `UNKNOWN`, `PAUSED`
+- `IN_OPERATION` - Laeuft normal gemaess Mode (activity zeigt was genau)
+- `WAIT_UPDATING`, `WAIT_POWER_UP`
+- `RESTRICTED` - Aktuell gesperrt; activity zeigt was er gerade macht
+- `OFF`, `STOPPED`
+- `ERROR` - Temporaerer Fehler (z.B. Loop-Signal weg), wird auto-resumed
+- `FATAL_ERROR` - Muss bestaetigt werden um zu verlassen
 - `ERROR_AT_POWER_UP`
 
 ### `planner.override.action`
 - `NOT_ACTIVE`
-- `FORCE_PARK`
-- `FORCE_MOW`
+- `FORCE_PARK` - Park bis naechster geplanter Task
+- `FORCE_MOW` - Erzwungenes Mowing fuer X Minuten, danach zurueck zur Calendar
 
 ### `planner.restrictedReason`
 - `NONE`
-- `WEEK_SCHEDULE`
-- `PARK_OVERRIDE`
-- `SENSOR`
-- `DAILY_LIMIT`
-- `FOTA`
-- `FROST`
+- `WEEK_SCHEDULE` - Aktuell kein Task im Calendar
+- `PARK_OVERRIDE` - Jemand hat manuell geparkt (Override-Feature)
+- `SENSOR` - Sensor sagt: Gras kurz genug
+- `DAILY_LIMIT` - Tageslimit erreicht
+- `FOTA` - Firmware-Update wird uebertragen
+- `FROST` - Frost-Sensor: zu kalt
+- `ALL_WORK_AREAS_COMPLETED` - Alle Work-Areas fertig
+- `EXTERNAL` - Externes Tool hat geparkt; siehe `externalReason` fuer Detail
+- `WORK_AREA_ABANDONED` - Work-Area konnte nicht fertiggestellt werden
 
-### `inactiveReason`
+### `planner.externalReason` (int, nur wenn restrictedReason=EXTERNAL)
+
+Code-Range zeigt **wer** den Mower geparkt hat:
+
+| Range | Quelle |
+|---|---|
+| `1000-1999` | Google Assistant |
+| `2000-2999` | Amazon Alexa |
+| `3000-3999` | **Home Assistant** |
+| `4000-4999` | IFTTT (z.B. 4000 Wildlife, 4001 Frost/Rain) |
+| `5000-5999` | GARDENA Smart System |
+| `6000-6999` | Smart Routine (6000 Rain, 6001 Frost, 6500 Wildlife) |
+| `100000-199999` | IFTTT applets |
+| `200000-299999` | Developer Portal Apps (z.B. unsere App) |
+
+Wir verwenden `200000-299999` wenn pyhusqvarna selbst einen Park-Befehl
+mit externalReason absendet.
+
+### `mower.inactiveReason`
 - `NONE`
-- `PLANNING`
-- `SEARCHING_FOR_SATELLITES`
+- `PLANNING` - Mower plant Pfad/Work-Area
+- `SEARCHING_FOR_SATELLITES` - EPOS wartet auf GPS-Fix
 
-## Open Questions (in Discovery klaeren)
+### `message.severity` (vom `/messages`-Endpoint)
+- `FATAL`, `ERROR`, `WARNING`, `INFO`, `DEBUG`, `SW`, `UNKNOWN`
 
-1. WS-Frame-Format: kommt `id` als JSON:API-style `data.id` oder flat? Genaue Schema-Struktur?
-2. WS sendet bei Mode-Wechsel komplette `attributes.mower` oder nur Delta?
-3. Triggern POST-Actions ein WS-Event (Confirm via Push) oder muss man pollen?
-4. PATCH-Settings: Wartet API auf Mower-Ack (synchron) oder asynchron?
-5. Rate-Limit Header (X-RateLimit-Remaining etc.) - vorhanden?
-6. WS-Heartbeat: Funktioniert aiohttp's `heartbeat=60` ohne Antwort vom Server? (TCP-Keepalive ausreichend?)
-7. Position-Events: kommen die pro neuer Position oder nur Snapshots?
-8. Statistics: ueber WS oder nur REST-Pull?
+## Discovery-Status (Stand 2026-05-30)
+
+| Frage | Antwort |
+|---|---|
+| WS-Frame-Format | Flach: `{id, type, attributes}` (kein JSON:API-data-Wrapper). Initial-Frame ist `{ready, connectionId}` ohne id/type. |
+| Position via WS | Pusht jede neue Position einzeln als `position-event-v2` mit `attributes.position` **Singular**. REST-Snapshot hat `positions` als 50er-Array. |
+| WS sendet Delta | Ja - nur die geaenderten Sub-Trees. Volle Snapshots nur via REST. |
+| POST-Actions -> WS-Event | Live noch zu verifizieren - vermutet ja, weil andere Klienten (App, IFTTT) auch State-Aenderungen verursachen und der eigene Push gleich aussieht. |
+| WS-Heartbeat | aiohttp `heartbeat=60` setzt Ping; Husqvarna-Server pongt nicht aber TCP bleibt offen. In Live-Run >2h validieren. |
+| Statistics ueber WS | Vermutet nein - nur via REST-Pull. |
+| Messages ueber WS | Nein - nur per Pull (`/mowers/<id>/messages`). |
+| Rate-Limit-Header | Live zu pruefen (Husqvarna nennt 10000 Req/Monat als Limit). |

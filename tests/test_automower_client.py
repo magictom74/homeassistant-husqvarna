@@ -11,6 +11,7 @@ from pyhusqvarna import (
     AutomowerClient,
     HeadlightMode,
     HusqvarnaAuth,
+    MessageSeverity,
     NotFoundError,
     ProtocolError,
     RateLimitError,
@@ -117,7 +118,7 @@ async def test_park_for_includes_duration(auth: HusqvarnaAuth) -> None:
 
 
 @respx.mock
-async def test_resume_pause_start_confirm(auth: HusqvarnaAuth) -> None:
+async def test_resume_pause_start(auth: HusqvarnaAuth) -> None:
     _stub_token()
     route = respx.post(f"{BASE}/v1/mowers/{MOWER_ID}/actions").mock(
         return_value=httpx.Response(202)
@@ -126,12 +127,40 @@ async def test_resume_pause_start_confirm(auth: HusqvarnaAuth) -> None:
         await client.resume_schedule(MOWER_ID)
         await client.pause(MOWER_ID)
         await client.start_for(MOWER_ID, duration_minutes=30)
-        await client.confirm_error(MOWER_ID)
     actions = [c.request.read() for c in route.calls]
     assert any(b'"ResumeSchedule"' in a for a in actions)
     assert any(b'"Pause"' in a for a in actions)
     assert any(b'"Start"' in a for a in actions)
-    assert any(b'"ConfirmError"' in a for a in actions)
+
+
+@respx.mock
+async def test_start_in_work_area(auth: HusqvarnaAuth) -> None:
+    _stub_token()
+    route = respx.post(f"{BASE}/v1/mowers/{MOWER_ID}/actions").mock(
+        return_value=httpx.Response(202)
+    )
+    async with AutomowerClient(auth) as client:
+        await client.start_in_work_area(MOWER_ID, work_area_id=42, duration_minutes=60)
+        with pytest.raises(ValueError):
+            await client.start_in_work_area(MOWER_ID, work_area_id=42, duration_minutes=0)
+    body = route.calls[0].request.read()
+    assert b'"StartInWorkArea"' in body
+    assert b'"workAreaId": 42' in body or b'"workAreaId":42' in body
+    assert b'"duration": 60' in body or b'"duration":60' in body
+
+
+@respx.mock
+async def test_confirm_error_uses_dedicated_endpoint(auth: HusqvarnaAuth) -> None:
+    # ConfirmError is /errors/confirm per OpenAPI v1.0.0, NOT /actions
+    _stub_token()
+    route = respx.post(f"{BASE}/v1/mowers/{MOWER_ID}/errors/confirm").mock(
+        return_value=httpx.Response(202)
+    )
+    actions_route = respx.post(f"{BASE}/v1/mowers/{MOWER_ID}/actions")
+    async with AutomowerClient(auth) as client:
+        await client.confirm_error(MOWER_ID)
+    assert route.called
+    assert not actions_route.called
 
 
 @respx.mock
@@ -146,7 +175,8 @@ async def test_invalid_durations_raise(auth: HusqvarnaAuth) -> None:
 @respx.mock
 async def test_set_cutting_height_range(auth: HusqvarnaAuth) -> None:
     _stub_token()
-    route = respx.patch(f"{BASE}/v1/mowers/{MOWER_ID}/settings").mock(
+    # Settings uses POST per OpenAPI v1.0.0, not PATCH
+    route = respx.post(f"{BASE}/v1/mowers/{MOWER_ID}/settings").mock(
         return_value=httpx.Response(200)
     )
     async with AutomowerClient(auth) as client:
@@ -162,7 +192,8 @@ async def test_set_cutting_height_range(auth: HusqvarnaAuth) -> None:
 @respx.mock
 async def test_set_headlight_mode(auth: HusqvarnaAuth) -> None:
     _stub_token()
-    route = respx.patch(f"{BASE}/v1/mowers/{MOWER_ID}/settings").mock(
+    # Settings uses POST per OpenAPI v1.0.0, not PATCH
+    route = respx.post(f"{BASE}/v1/mowers/{MOWER_ID}/settings").mock(
         return_value=httpx.Response(200)
     )
     async with AutomowerClient(auth) as client:
@@ -171,6 +202,110 @@ async def test_set_headlight_mode(auth: HusqvarnaAuth) -> None:
             await client.set_headlight_mode(MOWER_ID, HeadlightMode.UNKNOWN)
     body = route.calls[0].request.read()
     assert b'"EVENING_ONLY"' in body
+
+
+@respx.mock
+async def test_get_messages(auth: HusqvarnaAuth) -> None:
+    _stub_token()
+    respx.get(f"{BASE}/v1/mowers/{MOWER_ID}/messages").mock(
+        return_value=httpx.Response(200, json={
+            "data": {
+                "type": "messages",
+                "id": "messages",
+                "attributes": {
+                    "messages": [
+                        {"time": 1724158848, "code": 49, "severity": "WARNING",
+                         "latitude": 47.30, "longitude": 8.45},
+                        {"time": 1724148000, "code": 15, "severity": "ERROR"},
+                    ],
+                },
+            },
+        })
+    )
+    async with AutomowerClient(auth) as client:
+        msgs = await client.get_messages(MOWER_ID)
+    assert len(msgs) == 2
+    assert msgs[0].code == 49
+    assert msgs[0].severity is MessageSeverity.WARNING
+    assert msgs[0].latitude == 47.30
+    assert msgs[1].latitude is None  # no position on this one
+
+
+@respx.mock
+async def test_reset_cutting_blade(auth: HusqvarnaAuth) -> None:
+    _stub_token()
+    route = respx.post(
+        f"{BASE}/v1/mowers/{MOWER_ID}/statistics/resetCuttingBladeUsageTime"
+    ).mock(return_value=httpx.Response(202))
+    async with AutomowerClient(auth) as client:
+        await client.reset_cutting_blade_usage_time(MOWER_ID)
+    assert route.called
+
+
+@respx.mock
+async def test_stay_out_zones_get_and_toggle(auth: HusqvarnaAuth) -> None:
+    _stub_token()
+    respx.get(f"{BASE}/v1/mowers/{MOWER_ID}/stayOutZones").mock(
+        return_value=httpx.Response(200, json={
+            "data": {
+                "type": "stayOutZones",
+                "id": "stayOutZones",
+                "attributes": {
+                    "dirty": False,
+                    "zones": [
+                        {"id": "zone-1", "name": "Flowers", "enabled": True},
+                    ],
+                },
+            },
+        })
+    )
+    zone_id = "zone-1"
+    patch_route = respx.patch(
+        f"{BASE}/v1/mowers/{MOWER_ID}/stayOutZones/{zone_id}"
+    ).mock(return_value=httpx.Response(202))
+
+    async with AutomowerClient(auth) as client:
+        zones = await client.get_stay_out_zones(MOWER_ID)
+        await client.set_stay_out_zone_enabled(MOWER_ID, zone_id, enabled=False)
+
+    assert len(zones) == 1
+    assert zones[0].name == "Flowers"
+    body = patch_route.calls[0].request.read()
+    assert b'"enable": false' in body or b'"enable":false' in body
+
+
+@respx.mock
+async def test_work_areas_get_and_patch(auth: HusqvarnaAuth) -> None:
+    _stub_token()
+    respx.get(f"{BASE}/v1/mowers/{MOWER_ID}/workAreas").mock(
+        return_value=httpx.Response(200, json={
+            "data": [
+                {"type": "workArea", "id": 1, "attributes": {
+                    "workAreaId": 1, "name": "Front", "cuttingHeight": 60,
+                    "enabled": True,
+                }},
+            ],
+        })
+    )
+    patch_route = respx.patch(f"{BASE}/v1/mowers/{MOWER_ID}/workAreas/1").mock(
+        return_value=httpx.Response(202)
+    )
+
+    async with AutomowerClient(auth) as client:
+        areas = await client.get_work_areas(MOWER_ID)
+        await client.set_work_area_cutting_height(
+            MOWER_ID, 1, cutting_height_percent=80
+        )
+        with pytest.raises(ValueError):
+            await client.set_work_area_cutting_height(
+                MOWER_ID, 1, cutting_height_percent=101
+            )
+
+    assert len(areas) == 1
+    assert areas[0].name == "Front"
+    assert areas[0].cutting_height == 60
+    body = patch_route.calls[0].request.read()
+    assert b'"cuttingHeight": 80' in body or b'"cuttingHeight":80' in body
 
 
 @respx.mock

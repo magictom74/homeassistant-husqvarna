@@ -1,0 +1,279 @@
+openapi: '3.0.3'
+info:
+  version: '1.0.0'
+  title: Automower® Connect API
+  license:
+    name: MIT
+  description:
+    This API allows you to control and obtain information about Automower®.
+  contact:
+    name: Husqvarna Smart Home
+    url: https://www.husqvarna.com/uk/lawn-garden/smart-home-integration/
+servers:
+     - url: https://api.amc.husqvarna.dev/v1
+       description: Live Server
+security:
+  - APIKeyHeader: []
+    Token: []
+    Provider: []
+
+tags:
+  - name: 'Mower'
+    description: >-
+      REST API that can supply information and status about mowers paired to a user. You need to pair the mower in Automower® Connect app
+  - name: 'Actions'
+    description: >-
+      REST API that enables a user to control a paired mower.
+
+paths:
+  /mowers:
+    get:
+      tags:
+        - 'Mower'
+      summary: List data for all mowers linked to a user.
+      description: >-
+        List data for all mowers linked to the user associated with the
+        access token.
+      responses:
+        '200':
+          $ref: '#/components/responses/MultipleMowers'
+
+  /mowers/{id}:
+    get:
+      tags:
+        - 'Mower'
+      summary: Get data for a mower linked to a user.
+      parameters:
+        - $ref: '#/components/parameters/MowerID'
+      responses:
+        '200':
+          $ref: '#/components/responses/SingleMower'
+
+  /mowers/{id}/actions:
+    post:
+      tags:
+        - 'Actions'
+      summary: Accepts actions to control a mower linked to a user.
+      parameters:
+        - $ref: '#/components/parameters/MowerID'
+      requestBody:
+        $ref: '#/components/requestBodies/Action'
+      responses:
+        '202':
+          $ref: '#/components/responses/MowerCommandAccepted'
+
+  /mowers/{id}/calendar:
+    post:
+      tags:
+        - 'Actions'
+      summary: Update the calendar on the mower (replaces all tasks).
+      parameters:
+        - $ref: '#/components/parameters/MowerID'
+      requestBody:
+        $ref: '#/components/requestBodies/Calendar'
+      responses:
+        '202':
+          $ref: '#/components/responses/MowerCommandAccepted'
+
+  /mowers/{id}/errors/confirm:
+    post:
+      tags:
+        - 'Actions'
+      summary: Confirm current error.
+      description: >-
+        Confirm current non-fatal error on the mower. Only works when the
+        current error is marked confirmable. Available on 405X, 415X,
+        435X AWD, 535 AWD, and all Ceora / EPOS / NERA models.
+      parameters:
+        - $ref: '#/components/parameters/MowerID'
+      responses:
+        '202':
+          $ref: '#/components/responses/MowerCommandAccepted'
+
+  /mowers/{id}/messages:
+    get:
+      tags:
+        - 'Mower'
+      summary: Get last messages for a mower (max 50, includes position).
+      parameters:
+        - $ref: '#/components/parameters/MowerID'
+      responses:
+        '200':
+          $ref: '#/components/responses/SingleMowerMessages'
+
+  /mowers/{id}/profiles:
+    get:
+      tags:
+        - 'Mower'
+      summary: List all profiles for a mower.
+      parameters:
+        - $ref: '#/components/parameters/MowerID'
+      responses:
+        '200':
+          $ref: '#/components/responses/ListMowerProfiles'
+    post:
+      tags:
+        - 'Actions'
+      summary: Create a new profile for a mower.
+      parameters:
+        - $ref: '#/components/parameters/MowerID'
+        - $ref: '#/components/parameters/ProfileID'
+      requestBody:
+        $ref: '#/components/requestBodies/Profile'
+      responses:
+        '200':
+          $ref: '#/components/responses/SingleMowerProfile'
+
+  /mowers/{id}/profiles/{profileId}:
+    delete:
+      tags:
+        - 'Actions'
+      summary: Delete a profile for a mower.
+      parameters:
+        - $ref: '#/components/parameters/MowerID'
+        - $ref: '#/components/parameters/ProfileID'
+      responses:
+        '200':
+          $ref: '#/components/responses/MowerCommandAccepted'
+    post:
+      tags:
+        - 'Actions'
+      summary: Set current profile for a mower.
+      parameters:
+        - $ref: '#/components/parameters/MowerID'
+        - $ref: '#/components/parameters/ProfileID'
+      responses:
+        '200':
+          $ref: '#/components/responses/MowerCommandAccepted'
+
+  /mowers/{id}/profiles/current:
+    get:
+      tags:
+        - 'Mower'
+      summary: Get current profile for a mower.
+      parameters:
+        - $ref: '#/components/parameters/MowerID'
+      responses:
+        '200':
+          $ref: '#/components/responses/SingleMowerProfile'
+    patch:
+      tags:
+        - 'Actions'
+      summary: Update current profile for a mower.
+      parameters:
+        - $ref: '#/components/parameters/MowerID'
+      requestBody:
+        $ref: '#/components/requestBodies/ProfileUpdate'
+      responses:
+        '200':
+          $ref: '#/components/responses/SingleMowerProfile'
+
+  /mowers/{id}/settings:
+    post:
+      tags:
+        - 'Actions'
+      summary: Update settings (cuttingHeight, headlight). Method is POST, not PATCH.
+      parameters:
+        - $ref: '#/components/parameters/MowerID'
+      requestBody:
+        $ref: '#/components/requestBodies/Settings'
+      responses:
+        '202':
+          $ref: '#/components/responses/MowerCommandListAccepted'
+
+  /mowers/{id}/statistics/resetCuttingBladeUsageTime:
+    post:
+      tags:
+        - 'Actions'
+      summary: Reset the cutting blade usage time counter.
+      parameters:
+        - $ref: '#/components/parameters/MowerID'
+      responses:
+        '202':
+          $ref: '#/components/responses/MowerCommandAccepted'
+
+  /mowers/{id}/stayOutZones:
+    get:
+      tags:
+        - 'Mower'
+      summary: Get all stay-out zones (not available on EPOS).
+      parameters:
+        - $ref: '#/components/parameters/MowerID'
+      responses:
+        '200':
+          $ref: '#/components/responses/SingleMowerStayOutZones'
+
+  /mowers/{id}/stayOutZones/{stayOutId}:
+    patch:
+      tags:
+        - 'Actions'
+      summary: Enable or disable a stay-out zone.
+      parameters:
+        - $ref: '#/components/parameters/MowerID'
+        - $ref: '#/components/parameters/StayOutID'
+      requestBody:
+        $ref: '#/components/requestBodies/StayOutZone'
+      responses:
+        '202':
+          $ref: '#/components/responses/MowerCommandAccepted'
+
+  /mowers/{id}/workAreas:
+    get:
+      tags:
+        - 'Mower'
+      summary: Get all detailed work areas for a mower.
+      parameters:
+        - $ref: '#/components/parameters/MowerID'
+      responses:
+        '200':
+          $ref: '#/components/responses/MultipleMowerWorkAreas'
+
+  /mowers/{id}/workAreas/{workAreaId}:
+    get:
+      tags:
+        - 'Mower'
+      summary: Get detailed data for a work area.
+      parameters:
+        - $ref: '#/components/parameters/MowerID'
+        - $ref: '#/components/parameters/WorkAreaID'
+      responses:
+        '200':
+          $ref: '#/components/responses/SingleMowerWorkArea'
+    patch:
+      tags:
+        - 'Actions'
+      summary: Update a work area (cutting height, name, orientation).
+      parameters:
+        - $ref: '#/components/parameters/MowerID'
+        - $ref: '#/components/parameters/WorkAreaID'
+      requestBody:
+        $ref: '#/components/requestBodies/WorkArea'
+      responses:
+        '202':
+          $ref: '#/components/responses/MowerCommandAccepted'
+
+  /mowers/{id}/workAreas/{workAreaId}/calendar:
+    post:
+      tags:
+        - 'Actions'
+      summary: Update calendar for a work area (replaces all tasks).
+      parameters:
+        - $ref: '#/components/parameters/MowerID'
+        - $ref: '#/components/parameters/WorkAreaID'
+      requestBody:
+        $ref: '#/components/requestBodies/CalendarWorkArea'
+      responses:
+        '202':
+          $ref: '#/components/responses/MowerCommandAccepted'
+
+# NOTE: full schemas (parameters, schemas, requestBodies, responses,
+# securitySchemes) are intentionally omitted from this file. The
+# Husqvarna Developer Portal hosts the authoritative version with full
+# component definitions; this file is a path-level overview captured
+# at the time pyhusqvarna v0.1 was implemented. Field-level details we
+# rely on are mirrored into `docs/HUSQVARNA_API_NOTES.md` so a reader
+# doesn't need to cross-reference the original spec to understand the
+# library.
+#
+# Source: https://developer.husqvarnagroup.cloud/apis/automower-connect-api
+# Captured: 2026-05-30

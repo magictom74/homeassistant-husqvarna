@@ -92,6 +92,19 @@ class RestrictedReason(_StrEnum):
     DAILY_LIMIT = "DAILY_LIMIT"
     FOTA = "FOTA"
     FROST = "FROST"
+    ALL_WORK_AREAS_COMPLETED = "ALL_WORK_AREAS_COMPLETED"
+    EXTERNAL = "EXTERNAL"
+    WORK_AREA_ABANDONED = "WORK_AREA_ABANDONED"
+    UNKNOWN = "UNKNOWN"
+
+
+class MessageSeverity(_StrEnum):
+    FATAL = "FATAL"
+    ERROR = "ERROR"
+    WARNING = "WARNING"
+    INFO = "INFO"
+    DEBUG = "DEBUG"
+    SW = "SW"
     UNKNOWN = "UNKNOWN"
 
 
@@ -249,6 +262,7 @@ class Planner:
     next_start_ms: int = 0
     override_action: OverrideAction = OverrideAction.UNKNOWN
     restricted_reason: RestrictedReason = RestrictedReason.UNKNOWN
+    external_reason: int = 0
 
     @classmethod
     def from_raw(cls, raw: dict[str, Any]) -> Planner:
@@ -257,6 +271,7 @@ class Planner:
             next_start_ms=_int(raw.get("nextStartTimestamp")),
             override_action=OverrideAction.from_raw(override.get("action")),
             restricted_reason=RestrictedReason.from_raw(raw.get("restrictedReason")),
+            external_reason=_int(raw.get("externalReason")),
         )
 
 
@@ -333,11 +348,25 @@ class Position:
 
 @dataclass(frozen=True, slots=True)
 class WorkArea:
+    """A user-defined area of the lawn with its own schedule + cutting height.
+
+    Note ``cutting_height`` is **0-100 (percent)** here, unlike the global
+    ``Settings.cutting_height`` which is 1-9. The mower applies this only
+    when ``use_global_cutting_height`` is False.
+
+    ``progress`` / ``last_time_completed`` / ``last_time_abandoned`` are
+    EPOS-only (SYSTEMATIC mowing).
+    """
+
     id: int = 0
     name: str = ""
     type: str = ""
     cutting_height: int = 0
     enabled: bool = False
+    use_global_cutting_height: bool = False
+    progress: int = 0
+    last_time_completed: int = 0
+    last_time_abandoned: int = 0
 
     @classmethod
     def from_raw(cls, raw: dict[str, Any]) -> WorkArea:
@@ -347,6 +376,10 @@ class WorkArea:
             type=_str(raw.get("type")),
             cutting_height=_int(raw.get("cuttingHeight")),
             enabled=_bool(raw.get("enabled")),
+            use_global_cutting_height=_bool(raw.get("useGlobalCuttingHeight")),
+            progress=_int(raw.get("progress")),
+            last_time_completed=_int(raw.get("lastTimeCompleted")),
+            last_time_abandoned=_int(raw.get("lastTimeAbandoned")),
         )
 
 
@@ -362,6 +395,37 @@ class StayOutZone:
             id=_str(raw.get("id")),
             name=_str(raw.get("name")),
             enabled=_bool(raw.get("enabled")),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class MowerMessage:
+    """One entry from ``GET /mowers/<id>/messages``.
+
+    The cloud keeps the last 50 messages. Optional ``latitude`` /
+    ``longitude`` are the mower's position when the fault happened -
+    handy for spotting recurring trouble spots.
+
+    Error-code catalogue:
+    https://developer.husqvarnagroup.cloud/apis/automower-connect-api?tab=status%20description%20and%20error%20codes
+    """
+
+    timestamp_ms: int = 0
+    code: int = 0
+    severity: MessageSeverity = MessageSeverity.UNKNOWN
+    latitude: float | None = None
+    longitude: float | None = None
+
+    @classmethod
+    def from_raw(cls, raw: dict[str, Any]) -> MowerMessage:
+        lat_raw = raw.get("latitude")
+        lon_raw = raw.get("longitude")
+        return cls(
+            timestamp_ms=_int(raw.get("time")),
+            code=_int(raw.get("code")),
+            severity=MessageSeverity.from_raw(raw.get("severity")),
+            latitude=_float(lat_raw) if isinstance(lat_raw, (int, float)) else None,
+            longitude=_float(lon_raw) if isinstance(lon_raw, (int, float)) else None,
         )
 
 
@@ -587,9 +651,27 @@ class Mower(HusqvarnaDevice):
         if "statistics" in attrs:
             changes["statistics"] = Statistics.from_raw(_dict(attrs["statistics"]))
 
+        # Two shapes occur in the wild:
+        #   * REST snapshot / full delta:  attributes.positions = [{lat,lon}, ...]
+        #   * position-event-v2 push:      attributes.position  = {lat,lon}
+        # The push delivers one new point; we prepend it to the history
+        # tuple (keeping the same 50-item cap the cloud uses on REST).
         if "positions" in attrs and isinstance(attrs["positions"], list):
             changes["positions"] = tuple(
                 Position.from_raw(p) for p in attrs["positions"] if isinstance(p, dict)
+            )
+        elif "position" in attrs and isinstance(attrs["position"], dict):
+            new_pos = Position.from_raw(attrs["position"])
+            changes["positions"] = (new_pos, *self.positions)[:50]
+
+        if "workAreas" in attrs and isinstance(attrs["workAreas"], list):
+            changes["work_areas"] = tuple(
+                WorkArea.from_raw(w) for w in attrs["workAreas"] if isinstance(w, dict)
+            )
+
+        if "stayOutZones" in attrs and isinstance(attrs["stayOutZones"], list):
+            changes["stay_out_zones"] = tuple(
+                StayOutZone.from_raw(z) for z in attrs["stayOutZones"] if isinstance(z, dict)
             )
 
         return replace(self, **changes) if changes else self

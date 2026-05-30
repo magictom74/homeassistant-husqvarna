@@ -32,7 +32,7 @@ from ..exceptions import (
     ProtocolError,
     RateLimitError,
 )
-from ..models import HeadlightMode, Mower
+from ..models import HeadlightMode, Mower, MowerMessage, StayOutZone, WorkArea
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -194,35 +194,185 @@ class AutomowerClient:
             mower_id, "Start", attributes={"duration": int(duration_minutes)}
         )
 
+    async def start_in_work_area(
+        self, mower_id: str, *, work_area_id: int, duration_minutes: int
+    ) -> None:
+        """Start mowing in a specific work area for *duration_minutes*."""
+        if duration_minutes <= 0:
+            raise ValueError("duration_minutes must be > 0")
+        await self._action(
+            mower_id,
+            "StartInWorkArea",
+            attributes={
+                "duration": int(duration_minutes),
+                "workAreaId": int(work_area_id),
+            },
+        )
+
     # ------------------------------------------------------------------
     # error confirmation (the "fehler ruechstellung" surface)
     # ------------------------------------------------------------------
 
     async def confirm_error(self, mower_id: str) -> None:
-        """Clear the current error.
+        """Clear the current error via the dedicated /errors/confirm endpoint.
 
-        Only valid when the mower's last reported state had
-        ``isErrorConfirmable: true``. The cloud accepts the request
-        either way but the mower will reject it if the error isn't
-        actually confirmable.
+        Only succeeds when the mower's last reported state had
+        ``isErrorConfirmable: true``. Available on 405X, 415X, 435X AWD,
+        535 AWD and all Ceora / EPOS / NERA models.
+
+        Note: this is **not** an ``/actions`` POST despite what older
+        third-party adapters do. The cloud's REST schema (v1.0.0) makes
+        this a separate endpoint, and ``/actions`` with type
+        ``ConfirmError`` is not in the action enum.
         """
-        await self._action(mower_id, "ConfirmError")
+        await self._request(
+            "POST", f"/v1/mowers/{mower_id}/errors/confirm", json_body={}
+        )
 
     # ------------------------------------------------------------------
-    # settings (cutting height, headlight)
+    # alarms / message history
+    # ------------------------------------------------------------------
+
+    async def get_messages(self, mower_id: str) -> tuple[MowerMessage, ...]:
+        """GET /v1/mowers/<id>/messages - up to 50 latest mower messages.
+
+        Pull-only (not pushed via WebSocket). Returned newest-first.
+        """
+        raw = await self._request("GET", f"/v1/mowers/{mower_id}/messages")
+        if not isinstance(raw, dict):
+            raise ProtocolError(f"get_messages returned non-dict: {raw!r}")
+        data = raw.get("data")
+        if not isinstance(data, dict):
+            return ()
+        attrs = data.get("attributes")
+        if not isinstance(attrs, dict):
+            return ()
+        msgs = attrs.get("messages")
+        if not isinstance(msgs, list):
+            return ()
+        return tuple(MowerMessage.from_raw(m) for m in msgs if isinstance(m, dict))
+
+    # ------------------------------------------------------------------
+    # settings (cutting height, headlight) - POST, not PATCH!
     # ------------------------------------------------------------------
 
     async def set_cutting_height(self, mower_id: str, height: int) -> None:
         """Set the global cutting height (1-9)."""
         if not 1 <= height <= 9:
             raise ValueError("cutting height must be in 1..9")
-        await self._patch_settings(mower_id, {"cuttingHeight": int(height)})
+        await self._post_settings(mower_id, {"cuttingHeight": int(height)})
 
     async def set_headlight_mode(self, mower_id: str, mode: HeadlightMode) -> None:
         """Set the headlight mode (only useful when capability.headlights)."""
         if mode is HeadlightMode.UNKNOWN:
             raise ValueError("UNKNOWN is not a settable headlight mode")
-        await self._patch_settings(mower_id, {"headlight": {"mode": mode.value}})
+        await self._post_settings(mower_id, {"headlight": {"mode": mode.value}})
+
+    # ------------------------------------------------------------------
+    # statistics
+    # ------------------------------------------------------------------
+
+    async def reset_cutting_blade_usage_time(self, mower_id: str) -> None:
+        """Reset the cutting-blade usage timer (after a blade change)."""
+        await self._request(
+            "POST",
+            f"/v1/mowers/{mower_id}/statistics/resetCuttingBladeUsageTime",
+            json_body={},
+        )
+
+    # ------------------------------------------------------------------
+    # stay-out zones
+    # ------------------------------------------------------------------
+
+    async def get_stay_out_zones(self, mower_id: str) -> tuple[StayOutZone, ...]:
+        """GET /v1/mowers/<id>/stayOutZones - all defined stay-out zones."""
+        raw = await self._request("GET", f"/v1/mowers/{mower_id}/stayOutZones")
+        if not isinstance(raw, dict):
+            return ()
+        data = raw.get("data")
+        if not isinstance(data, dict):
+            return ()
+        attrs = data.get("attributes")
+        if not isinstance(attrs, dict):
+            return ()
+        zones = attrs.get("zones")
+        if not isinstance(zones, list):
+            return ()
+        return tuple(StayOutZone.from_raw(z) for z in zones if isinstance(z, dict))
+
+    async def set_stay_out_zone_enabled(
+        self, mower_id: str, zone_id: str, *, enabled: bool
+    ) -> None:
+        """Enable or disable a stay-out zone (PATCH per OpenAPI spec)."""
+        body = {
+            "data": {
+                "type": "stayOutZone",
+                "id": zone_id,
+                "attributes": {"enable": bool(enabled)},
+            }
+        }
+        await self._request(
+            "PATCH",
+            f"/v1/mowers/{mower_id}/stayOutZones/{zone_id}",
+            json_body=body,
+        )
+
+    # ------------------------------------------------------------------
+    # work areas (detail endpoint + PATCH)
+    # ------------------------------------------------------------------
+
+    async def get_work_areas(self, mower_id: str) -> tuple[WorkArea, ...]:
+        """GET /v1/mowers/<id>/workAreas - all work areas with detail."""
+        raw = await self._request("GET", f"/v1/mowers/{mower_id}/workAreas")
+        if not isinstance(raw, dict):
+            return ()
+        items = raw.get("data")
+        if not isinstance(items, list):
+            return ()
+        result: list[WorkArea] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            attrs = item.get("attributes")
+            if isinstance(attrs, dict):
+                result.append(WorkArea.from_raw(attrs))
+        return tuple(result)
+
+    async def set_work_area_cutting_height(
+        self, mower_id: str, work_area_id: int, *, cutting_height_percent: int
+    ) -> None:
+        """Update a work area's cutting height (0-100 percent, not 1-9)."""
+        if not 0 <= cutting_height_percent <= 100:
+            raise ValueError("cutting_height_percent must be in 0..100")
+        body = {
+            "data": {
+                "type": "workArea",
+                "id": int(work_area_id),
+                "attributes": {"cuttingHeight": int(cutting_height_percent)},
+            }
+        }
+        await self._request(
+            "PATCH",
+            f"/v1/mowers/{mower_id}/workAreas/{work_area_id}",
+            json_body=body,
+        )
+
+    async def set_work_area_enabled(
+        self, mower_id: str, work_area_id: int, *, enabled: bool
+    ) -> None:
+        """Enable or disable a work area."""
+        body = {
+            "data": {
+                "type": "workArea",
+                "id": int(work_area_id),
+                "attributes": {"enable": bool(enabled)},
+            }
+        }
+        await self._request(
+            "PATCH",
+            f"/v1/mowers/{mower_id}/workAreas/{work_area_id}",
+            json_body=body,
+        )
 
     # ------------------------------------------------------------------
     # internals
@@ -242,10 +392,10 @@ class AutomowerClient:
             "POST", f"/v1/mowers/{mower_id}/actions", json_body=body
         )
 
-    async def _patch_settings(
+    async def _post_settings(
         self, mower_id: str, attributes: dict[str, Any]
     ) -> None:
         body = {"data": {"type": "settings", "attributes": attributes}}
         await self._request(
-            "PATCH", f"/v1/mowers/{mower_id}/settings", json_body=body
+            "POST", f"/v1/mowers/{mower_id}/settings", json_body=body
         )
